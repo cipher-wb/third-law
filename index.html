@@ -57,8 +57,8 @@
       // ---- 分块加载：大文件切成 ~4MB 分块存放，浏览器并行下载后拼回 Blob ----
       // （单个大文件在部分网络环境下容易被中断；小分块 + 重试成功率高得多）
       var CHUNKED = {
-        data: { base: buildUrl + "/WebGL.data.unityweb", parts: 6, bytes: 23493081 },
-        wasm: { base: buildUrl + "/WebGL.wasm.unityweb", parts: 3, bytes: 12006204 }
+        data: { base: buildUrl + "/WebGL.data.unityweb.202608231440", parts: 6, bytes: 23493081 },
+        wasm: { base: buildUrl + "/WebGL.wasm.unityweb.202608231440", parts: 3, bytes: 12006204 }
       };
 
       function fetchPart(url, attempt) {
