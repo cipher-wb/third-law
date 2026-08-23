@@ -53,6 +53,42 @@
 
       var buildUrl = "Build";
       var loaderUrl = buildUrl + "/WebGL.loader.js";
+
+      // ---- 分块加载：大文件切成 ~4MB 分块存放，浏览器并行下载后拼回 Blob ----
+      // （单个大文件在部分网络环境下容易被中断；小分块 + 重试成功率高得多）
+      var CHUNKED = {
+        data: { base: buildUrl + "/WebGL.data.unityweb", parts: 6, bytes: 23491879 },
+        wasm: { base: buildUrl + "/WebGL.wasm.unityweb", parts: 3, bytes: 12004926 }
+      };
+
+      function fetchPart(url, attempt) {
+        return fetch(url, { cache: "force-cache" }).then(function (r) {
+          if (!r.ok) throw new Error(url + " HTTP " + r.status);
+          return r.arrayBuffer();
+        }).catch(function (e) {
+          if (attempt >= 3) throw e;
+          return new Promise(function (res) { setTimeout(res, 800 * attempt); })
+            .then(function () { return fetchPart(url, attempt + 1); });
+        });
+      }
+
+      function fetchChunked(spec, onBytes) {
+        var got = new Array(spec.parts).fill(0);
+        var jobs = [];
+        for (var i = 0; i < spec.parts; i++) {
+          (function (idx) {
+            jobs.push(fetchPart(spec.base + ".part" + idx, 1).then(function (buf) {
+              got[idx] = buf.byteLength;
+              onBytes(got.reduce(function (a, b) { return a + b; }, 0));
+              return buf;
+            }));
+          })(i);
+        }
+        return Promise.all(jobs).then(function (bufs) {
+          return URL.createObjectURL(new Blob(bufs));
+        });
+      }
+
       var config = {
         arguments: [],
         dataUrl: buildUrl + "/WebGL.data.unityweb",
@@ -110,23 +146,42 @@
 
       document.querySelector("#unity-loading-bar").style.display = "block";
 
-      var script = document.createElement("script");
-      script.src = loaderUrl;
-      script.onload = () => {
-        createUnityInstance(canvas, config, (progress) => {
-          document.querySelector("#unity-progress-bar-full").style.width = 100 * progress + "%";
-              }).then((unityInstance) => {
-                document.querySelector("#unity-loading-bar").style.display = "none";
-                document.querySelector("#unity-fullscreen-button").onclick = () => {
-                  unityInstance.SetFullscreen(1);
-                };
+      var progressBar = document.querySelector("#unity-progress-bar-full");
+      var totalChunkBytes = CHUNKED.data.bytes + CHUNKED.wasm.bytes;
+      var chunkLoaded = { data: 0, wasm: 0 };
+      function reportChunks() {
+        var frac = (chunkLoaded.data + chunkLoaded.wasm) / totalChunkBytes;
+        progressBar.style.width = 80 * Math.min(frac, 1) + "%";  // 下载占进度条前 80%
+      }
 
-              }).catch((message) => {
-                alert(message);
-              });
-            };
+      // 先并行拉取分块，拼好后再启动 Unity 加载器
+      Promise.all([
+        fetchChunked(CHUNKED.data, function (n) { chunkLoaded.data = n; reportChunks(); }),
+        fetchChunked(CHUNKED.wasm, function (n) { chunkLoaded.wasm = n; reportChunks(); })
+      ]).then(function (urls) {
+        config.dataUrl = urls[0];
+        config.codeUrl = urls[1];
 
-      document.body.appendChild(script);
+        var script = document.createElement("script");
+        script.src = loaderUrl;
+        script.onload = () => {
+          createUnityInstance(canvas, config, (progress) => {
+            progressBar.style.width = 80 + 20 * progress + "%";
+                }).then((unityInstance) => {
+                  document.querySelector("#unity-loading-bar").style.display = "none";
+                  document.querySelector("#unity-fullscreen-button").onclick = () => {
+                    unityInstance.SetFullscreen(1);
+                  };
+
+                }).catch((message) => {
+                  alert(message);
+                });
+              };
+
+        document.body.appendChild(script);
+      }).catch(function (e) {
+        unityShowBanner("资源下载失败，请刷新重试：" + e, "error");
+      });
 
     </script>
   </body>
